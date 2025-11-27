@@ -18,10 +18,12 @@ import * as TableCellExt from "@tiptap/extension-table-cell";
 import * as StrikeExt from "@tiptap/extension-strike";
 import * as HighlightExt from "@tiptap/extension-highlight";
 import * as HorizontalRuleExt from "@tiptap/extension-horizontal-rule";
-import { InputRule } from "@tiptap/core";
+import { InputRule, nodeInputRule } from "@tiptap/core";
 import MathExt from "../extensions/Math.js";
 import WikiLink from "../extensions/WikiLink.js";
 import WikiLinkSuggest from "../lib/WikiLinkSuggest.js";
+import BlockId from "../extensions/BlockId.js";
+import WikiLinkEmbed from "../extensions/WikiLinkEmbed.js";
 import TagAutocomplete from "../extensions/TagAutocomplete.js";
 import HeadingAltInput from "../extensions/HeadingAltInput.js";
 import MarkdownPaste from "../extensions/MarkdownPaste.js";
@@ -34,15 +36,23 @@ import TaskCreationTrigger from "../extensions/TaskCreationTrigger.js";
 import CodeBlockIndent from "../extensions/CodeBlockIndent.js";
 import Callout from "../extensions/Callout.js";
 import Folding from "../extensions/Folding.js";
+import MermaidDiagram from "../extensions/MermaidDiagram.jsx";
 import liveEditorSettings from "../../core/editor/live-settings.js";
 import WikiLinkModal from "../../components/WikiLinkModal.jsx";
 import TaskCreationModal from "../../components/TaskCreationModal.jsx";
 import ExportModal from "../../views/ExportModal.jsx";
+import ImageInsertModal from "../../components/ImageInsertModal.jsx";
+import MathFormulaModal from "../../components/MathFormulaModal.jsx";
 import ReadingModeView from "./ReadingModeView.jsx";
+import PagePreview from "../../components/PagePreview.jsx";
+import { ImageViewerModal } from "../../components/ImageViewer/ImageViewerModal.jsx";
+import { findImageFiles } from "../../utils/imageUtils.js";
 import { editorAPI } from "../../plugins/api/EditorAPI.js";
 import { pluginAPI } from "../../plugins/api/PluginAPI.js";
 
 import "../styles/editor.css";
+import "../styles/block-embeds.css";
+import "../../styles/page-preview.css";
 
 const Editor = forwardRef(({ content, onContentChange, onEditorReady }, ref) => {
   const [extensions, setExtensions] = useState(null);
@@ -73,7 +83,6 @@ const Editor = forwardRef(({ content, onContentChange, onEditorReady }, ref) => 
     };
 
     const handleMarkdownConfigChange = () => {
-      console.log('[Editor] Markdown config changed, forcing editor reload...');
       setLastPluginUpdate(Date.now());
     };
 
@@ -132,28 +141,31 @@ const Editor = forwardRef(({ content, onContentChange, onEditorReady }, ref) => 
     if (Link) exts.push(Link.configure({ openOnClick: false, autolink: true, linkOnPaste: true }));
     if (TaskList && TaskItem) exts.push(TaskList, TaskItem);
     if (Image) {
-      exts.push(Image.configure({
+      // Properly extend Image extension to override addInputRules
+      const CustomImage = Image.extend({
+        addInputRules() {
+          return [
+            nodeInputRule({
+              find: /!\[([^\]]*)\]\(([^)]+)\)$/,
+              type: this.type,
+              getAttributes: (match) => {
+                const src = match[2];
+                const alt = match[1];
+                return {
+                  src,
+                  alt
+                };
+              },
+            }),
+          ];
+        },
+      });
+
+      exts.push(CustomImage.configure({
         inline: true,
         allowBase64: true,
         HTMLAttributes: {
           class: 'editor-image',
-        },
-        addInputRules() {
-          return [
-            new InputRule({
-              find: /!\[([^\]]*)\]\(([^)]+)\)$/,
-              handler: ({ state, range, match, chain }) => {
-                const alt = match[1];
-                const src = match[2];
-                // Handle both local paths and web URLs
-                const resolvedSrc = src.startsWith('http') ? src : src;
-                chain().deleteRange(range).insertContent({
-                  type: 'image',
-                  attrs: { src: resolvedSrc, alt: alt || '' }
-                }).run();
-              },
-            }),
-          ];
         },
       }));
     }
@@ -222,6 +234,12 @@ const Editor = forwardRef(({ content, onContentChange, onEditorReady }, ref) => 
     exts.push(WikiLink);
     exts.push(WikiLinkSuggest);
 
+    // Obsidian-style block IDs (^blockid)
+    exts.push(BlockId);
+
+    // Obsidian-style block embeds (![[File^blockid]])
+    exts.push(WikiLinkEmbed);
+
     // Tag autocomplete
     exts.push(TagAutocomplete);
 
@@ -246,6 +264,10 @@ const Editor = forwardRef(({ content, onContentChange, onEditorReady }, ref) => 
 
     // Section folding for headings
     exts.push(Folding);
+
+    // Mermaid diagrams
+    exts.push(MermaidDiagram);
+
 
     // Add plugin extensions
     exts.push(...pluginExtensions);
@@ -369,6 +391,12 @@ const Tiptap = forwardRef(({ extensions, content, onContentChange, editorSetting
   const [isWikiLinkModalOpen, setIsWikiLinkModalOpen] = useState(false);
   const [isTaskCreationModalOpen, setIsTaskCreationModalOpen] = useState(false);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [imageViewerState, setImageViewerState] = useState({ isOpen: false, imagePath: null });
+  const [imageInsertModalState, setImageInsertModalState] = useState({ isOpen: false, onInsert: null });
+  const [mathFormulaModalState, setMathFormulaModalState] = useState({ isOpen: false, mode: 'inline', onInsert: null });
+
+  // Page preview state
+  const [previewData, setPreviewData] = useState(null);
 
   // Subscribe to live settings changes for real-time updates
   const [liveSettings, setLiveSettings] = useState(liveEditorSettings.getAllSettings());
@@ -424,6 +452,19 @@ const Tiptap = forwardRef(({ extensions, content, onContentChange, editorSetting
         click: (view, event) => {
           const t = event.target;
           if (!(t instanceof Element)) return false;
+
+          // Handle image clicks
+          const img = t.closest('img.editor-image');
+          if (img) {
+            event.preventDefault();
+            const src = img.getAttribute('src') || '';
+            if (src) {
+              setImageViewerState({ isOpen: true, imagePath: src });
+            }
+            return true;
+          }
+
+          // Handle wiki-link clicks
           const el = t.closest('[data-type="wiki-link"]');
           if (!el) return false;
           const href = el.getAttribute('href') || '';
@@ -432,11 +473,28 @@ const Tiptap = forwardRef(({ extensions, content, onContentChange, editorSetting
 
           event.preventDefault();
 
-          // Log for debugging
+          // Detect modifier keys for "open in new tab" behavior
+          const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+          const openInNewTab = isMac ? event.metaKey : event.ctrlKey;
+
+
+          // Check if this is a block reference (contains ^)
+          // Check BOTH href and target since target might be empty when loaded from disk
+          const hasBlockRef = (href && href.includes('^')) || (target && target.includes('^'));
+          let blockId = null;
+          let cleanHref = href;  // Clean path without block reference
+
+          if (hasBlockRef) {
+            // Extract blockId from href (format: "/path/to/Filename.md^blockid")
+            const parts = href.split('^');
+            cleanHref = parts[0];  // Remove ^blockid from path
+            blockId = parts[1];    // Get the block ID
+
+          }
 
           // Check if this is a resolved file path that exists in the index
           const index = globalThis.__LOKUS_FILE_INDEX__ || [];
-          const fileExists = index.some(f => f.path === href);
+          const fileExists = index.some(f => f.path === cleanHref);
 
           if (!fileExists && target) {
             // Show a user-friendly message
@@ -449,9 +507,19 @@ const Tiptap = forwardRef(({ extensions, content, onContentChange, editorSetting
           (async () => {
             try {
               const { emit } = await import('@tauri-apps/api/event');
-              await emit('lokus:open-file', href);
+              // Use different event based on modifier key
+              const eventName = openInNewTab ? 'lokus:open-file-new-tab' : 'lokus:open-file';
+              await emit(eventName, cleanHref);  // Use clean path without ^blockid
             } catch {
-              try { window.dispatchEvent(new CustomEvent('lokus:open-file', { detail: href })); } catch {}
+              try {
+                const eventName = openInNewTab ? 'lokus:open-file-new-tab' : 'lokus:open-file';
+                window.dispatchEvent(new CustomEvent(eventName, { detail: cleanHref }));  // Use clean path
+              } catch {}
+            }
+
+            // If block reference, also emit scroll event
+            if (hasBlockRef && blockId) {
+              window.dispatchEvent(new CustomEvent('lokus:scroll-to-block', { detail: blockId }));
             }
           })();
           return true;
@@ -501,37 +569,52 @@ const Tiptap = forwardRef(({ extensions, content, onContentChange, editorSetting
       setIsTaskCreationModalOpen(true);
     };
 
+    // Listen for wiki link hover events
+    const handleWikiLinkHover = (event) => {
+      const { target, position } = event.detail;
+      setPreviewData({ target, position });
+    };
+
+    const handleWikiLinkHoverEnd = () => {
+      setPreviewData(null);
+    };
+
+    // Listen for image insert modal event
+    const handleImageInsertModalEvent = (event) => {
+      const { onInsert } = event.detail;
+      setImageInsertModalState({ isOpen: true, onInsert });
+    };
+
+    // Listen for math formula modal event
+    const handleMathFormulaModalEvent = (event) => {
+      const { mode, onInsert } = event.detail;
+      setMathFormulaModalState({ isOpen: true, mode, onInsert });
+    };
+
     document.addEventListener('keydown', handleKeyDown);
     window.addEventListener('lokus:open-task-modal', handleTaskModalEvent);
+    window.addEventListener('wiki-link-hover', handleWikiLinkHover);
+    window.addEventListener('wiki-link-hover-end', handleWikiLinkHoverEnd);
+    window.addEventListener('open-image-insert-modal', handleImageInsertModalEvent);
+    window.addEventListener('open-math-formula-modal', handleMathFormulaModalEvent);
 
     return () => {
       document.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('lokus:open-task-modal', handleTaskModalEvent);
+      window.removeEventListener('wiki-link-hover', handleWikiLinkHover);
+      window.removeEventListener('wiki-link-hover-end', handleWikiLinkHoverEnd);
+      window.removeEventListener('open-image-insert-modal', handleImageInsertModalEvent);
+      window.removeEventListener('open-math-formula-modal', handleMathFormulaModalEvent);
     };
   }, [editor]);
 
   useEffect(() => {
     if (editor && content !== editor.getHTML()) {
       isSettingRef.current = true;
-      
-      // Import markdown compiler and process content
-      (async () => {
-        try {
-          const { getMarkdownCompiler } = await import('../../core/markdown/compiler.js');
-          const compiler = getMarkdownCompiler();
-          
-          // Check if content looks like markdown and process it
-          if (compiler.isMarkdown(content)) {
-            const htmlContent = compiler.compile(content);
-            editor.commands.setContent(htmlContent);
-          } else {
-            editor.commands.setContent(content);
-          }
-        } catch (error) {
-          // Fallback if markdown compiler fails
-          editor.commands.setContent(content);
-        }
-      })();
+
+      // Content is already processed in Workspace.jsx, just set it directly
+      // This prevents double markdown-it processing which corrupts custom HTML tags
+      editor.commands.setContent(content);
     }
   }, [content, editor]);
 
@@ -542,6 +625,7 @@ const Tiptap = forwardRef(({ extensions, content, onContentChange, editorSetting
     state: editor?.state,
     view: editor?.view,
     getHTML: () => editor?.getHTML(),
+    getText: () => editor?.getText(),
     setContent: (content) => editor?.commands?.setContent(content),
     insertContent: (content) => editor?.commands?.insertContent(content),
     focus: () => editor?.commands?.focus(),
@@ -657,10 +741,13 @@ const Tiptap = forwardRef(({ extensions, content, onContentChange, editorSetting
         }
         break;
       case 'insertImage':
-        const imageUrl = window.prompt('Enter image URL:');
-        if (imageUrl) {
-          editor.commands.setImage({ src: imageUrl });
-        }
+        // Open image insert modal
+        setImageInsertModalState({
+          isOpen: true,
+          onInsert: ({ src, alt }) => {
+            editor.commands.setImage({ src, alt });
+          }
+        });
         break;
       case 'exportMarkdown':
       case 'exportHTML':
@@ -681,6 +768,72 @@ const Tiptap = forwardRef(({ extensions, content, onContentChange, editorSetting
           }
         };
         input.click();
+        break;
+      case 'copyBlockReference':
+        (async () => {
+          try {
+            // Get current block
+            const { state } = editor
+            const { $from } = state.selection
+            const node = $from.parent
+
+            // Import dynamically to avoid circular dependencies
+            const blockIdManager = (await import('../../core/blocks/block-id-manager.js')).default
+            const { queueBlockIdWrite } = await import('../../core/blocks/block-writer.js')
+
+            // Check if block has ID
+            let blockId = node.attrs.blockId
+
+            if (!blockId) {
+              // Generate new ID
+              blockId = blockIdManager.generateId()
+
+              // Add to node
+              const pos = $from.before($from.depth)
+              editor.chain()
+                .focus()
+                .command(({ tr }) => {
+                  tr.setNodeMarkup(pos, null, { ...node.attrs, blockId })
+                  return true
+                })
+                .run()
+
+              // Write back to file (if activeFile is available)
+              if (typeof window !== 'undefined' && window.__LOKUS_ACTIVE_FILE__) {
+                const activeFile = window.__LOKUS_ACTIVE_FILE__
+
+                // Calculate line number from position
+                let lineNumber = 1
+                state.doc.nodesBetween(0, pos, (node, pos) => {
+                  if (node.isBlock) lineNumber++
+                })
+
+                queueBlockIdWrite(activeFile, lineNumber, blockId)
+                  .then((success) => {
+                    if (success) {
+                      blockIdManager.invalidateFile(activeFile)
+                    }
+                  })
+                  .catch(err => {
+                    console.error('[Editor] Error writing block ID:', err)
+                  })
+              }
+            }
+
+            // Format reference
+            const activeFile = window.__LOKUS_ACTIVE_FILE__ || ''
+            const fileName = activeFile.split('/').pop()?.replace('.md', '') || 'Unknown'
+            const reference = `[[${fileName}^${blockId}]]`
+
+            // Copy to clipboard
+            await navigator.clipboard.writeText(reference)
+
+            // Optional: Show toast notification (if you have a toast system)
+            // toast.success('Block reference copied to clipboard')
+          } catch (error) {
+            console.error('[Editor] Error copying block reference:', error)
+          }
+        })()
         break;
       default:
     }
@@ -713,6 +866,7 @@ const Tiptap = forwardRef(({ extensions, content, onContentChange, editorSetting
     );
   }
 
+  
   // Edit and Live Preview modes - show TipTap editor
   // In live mode, we keep editor editable but could add visual hints
   return (
@@ -762,6 +916,45 @@ const Tiptap = forwardRef(({ extensions, content, onContentChange, editorSetting
         }}
         workspacePath={globalThis.__LOKUS_WORKSPACE_PATH__}
         exportType="single"
+      />
+
+      {/* Page Preview on Hover */}
+      {previewData && (
+        <PagePreview
+          target={previewData.target}
+          position={previewData.position}
+          onClose={() => setPreviewData(null)}
+        />
+      )}
+
+      {/* Image Viewer Modal */}
+      <ImageViewerModal
+        isOpen={imageViewerState.isOpen}
+        imagePath={imageViewerState.imagePath}
+        allImageFiles={globalThis.__LOKUS_ALL_IMAGE_FILES__ || []}
+        onClose={() => setImageViewerState({ isOpen: false, imagePath: null })}
+      />
+
+      {/* Image Insert Modal */}
+      <ImageInsertModal
+        isOpen={imageInsertModalState.isOpen}
+        onClose={() => setImageInsertModalState({ isOpen: false, onInsert: null })}
+        onInsert={(data) => {
+          imageInsertModalState.onInsert?.(data);
+          setImageInsertModalState({ isOpen: false, onInsert: null });
+        }}
+        workspacePath={globalThis.__LOKUS_WORKSPACE_PATH__}
+      />
+
+      {/* Math Formula Modal */}
+      <MathFormulaModal
+        isOpen={mathFormulaModalState.isOpen}
+        mode={mathFormulaModalState.mode}
+        onClose={() => setMathFormulaModalState({ isOpen: false, mode: 'inline', onInsert: null })}
+        onInsert={(data) => {
+          mathFormulaModalState.onInsert?.(data);
+          setMathFormulaModalState({ isOpen: false, mode: 'inline', onInsert: null });
+        }}
       />
     </>
   );

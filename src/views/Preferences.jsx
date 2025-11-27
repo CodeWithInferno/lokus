@@ -14,13 +14,11 @@ import ConnectionStatus from "../components/ConnectionStatus.jsx";
 import GmailLogin from "../components/gmail/GmailLogin.jsx";
 import { useAuth } from "../core/auth/AuthContext";
 import { User, LogIn, LogOut, Crown, Shield, Settings as SettingsIcon } from "lucide-react";
+import ImportWizard from "../components/ImportWizard.jsx";
 
 export default function Preferences() {
-  console.log('🔧 Preferences component rendering');
-  console.log('🔧 Window location:', window.location.href);
-  console.log('🔧 Window search params:', new URLSearchParams(window.location.search).toString());
-  console.log('🔧 Document root styles:', window.getComputedStyle(document.documentElement).getPropertyValue('--bg'));
-  console.log('🔧 Document body classes:', document.body.className);
+  if (import.meta.env.DEV) {
+  }
   const [themes, setThemes] = useState([]);
   const [activeTheme, setActiveTheme] = useState("");
   const [themeTokens, setThemeTokens] = useState({});
@@ -29,6 +27,7 @@ export default function Preferences() {
   const [section, setSection] = useState("Appearance");
   const { isAuthenticated, user, signIn, signOut, isLoading, getAccessToken } = useAuth();
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const [showImportWizard, setShowImportWizard] = useState(false);
   // Removed mode/accent complexity - themes handle everything now
   const actions = useMemo(() => listActions(), []);
   const [keymap, setKeymap] = useState({});
@@ -322,10 +321,13 @@ export default function Preferences() {
           try {
             const currentWorkspace = await invoke('api_get_current_workspace');
             if (currentWorkspace) {
-              console.log('Got workspace path from API:', currentWorkspace);
+              if (import.meta.env.DEV) {
+              }
               setWorkspacePath(currentWorkspace);
             } else {
-              console.warn('No current workspace in API state');
+              if (import.meta.env.DEV) {
+                console.warn('No current workspace in API state');
+              }
             }
           } catch (e) {
             console.error('Failed to get current workspace from API:', e);
@@ -381,11 +383,13 @@ export default function Preferences() {
         const branchName = await invoke('git_get_current_branch', { workspacePath });
         if (branchName && branchName !== syncBranch) {
           setSyncBranch(branchName);
-          console.log('[Sync] Auto-detected branch:', branchName);
+          if (import.meta.env.DEV) {
+          }
         }
       } catch (e) {
         // Ignore error if Git not initialized yet
-        console.log('[Sync] Could not detect branch (Git may not be initialized)');
+        if (import.meta.env.DEV) {
+        }
       }
     };
 
@@ -664,10 +668,12 @@ export default function Preferences() {
             "Daily Notes",
             "Markdown",
             "Shortcuts",
+            "Import",
             "Sync",
             "Connections",
             "Account",
             "AI Assistant",
+            "Updates",
           ].map((name) => (
             <button
               key={name}
@@ -2166,7 +2172,9 @@ export default function Preferences() {
                         await emit('lokus:markdown-config-changed', {
                           config: markdownSyntaxConfig.getAll()
                         });
-                        console.log('[Preferences] Emitted lokus:markdown-config-changed event');
+                        if (import.meta.env.DEV) {
+                          console.log('[Preferences] Emitted lokus:markdown-config-changed event');
+                        }
                       } catch (e) {
                         console.error('[Preferences] Failed to emit config change event:', e);
                       }
@@ -2990,11 +2998,136 @@ export default function Preferences() {
             </div>
           )}
 
+          {section === "Updates" && (
+            <div className="space-y-8 max-w-xl">
+              <section>
+                <h2 className="text-sm uppercase tracking-wide text-app-muted mb-4">App Updates</h2>
+
+                <div className="bg-app-panel rounded-lg p-4 border border-app-border">
+                  <div className="flex items-start justify-between mb-4">
+                    <div>
+                      <h3 className="font-medium mb-1">Current Version</h3>
+                      <p className="text-2xl font-semibold text-app-accent">v1.3.3</p>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={() => window.dispatchEvent(new Event('check-for-update'))}
+                    className="w-full px-4 py-2 bg-app-accent text-app-accent-fg rounded-md hover:opacity-90 transition-opacity"
+                  >
+                    Check for Updates
+                  </button>
+
+                  <p className="mt-4 text-sm text-app-muted">
+                    Lokus automatically checks for updates in the background. Click the button above to check manually.
+                  </p>
+                </div>
+              </section>
+            </div>
+          )}
+
+          {section === "Import" && (
+            <div className="space-y-6 max-w-2xl">
+              <div>
+                <h2 className="text-2xl font-semibold mb-2" style={{color: 'rgb(var(--text))'}}>
+                  Import Notes
+                </h2>
+                <p style={{color: 'rgb(var(--muted))'}}>
+                  Migrate your notes from other platforms
+                </p>
+              </div>
+
+              <div className="space-y-4">
+                {/* Obsidian */}
+                <div className="p-4 border rounded-lg" style={{borderColor: 'rgb(var(--border))'}}>
+                  <h3 className="font-semibold mb-2" style={{color: 'rgb(var(--text))'}}>
+                    Obsidian
+                  </h3>
+                  <p className="text-sm mb-3" style={{color: 'rgb(var(--muted))'}}>
+                    Already compatible! Just open your Obsidian vault folder in Lokus.
+                  </p>
+                  <div className="px-3 py-2 rounded" style={{
+                    background: 'rgb(var(--accent) / 0.1)',
+                    color: 'rgb(var(--accent))',
+                    fontSize: '14px'
+                  }}>
+                    ✨ No import needed - open vault directly!
+                  </div>
+                </div>
+
+                {/* Logseq */}
+                <div className="p-4 border rounded-lg" style={{borderColor: 'rgb(var(--border))'}}>
+                  <h3 className="font-semibold mb-2" style={{color: 'rgb(var(--text))'}}>
+                    Logseq
+                  </h3>
+                  <p className="text-sm mb-3" style={{color: 'rgb(var(--muted))'}}>
+                    Convert your Logseq graph to Lokus format with automatic outline and property conversion.
+                  </p>
+                  <button
+                    onClick={() => setShowImportWizard(true)}
+                    className="px-4 py-2 rounded hover:opacity-90 transition-opacity"
+                    style={{
+                      background: 'rgb(var(--accent))',
+                      color: 'white'
+                    }}
+                  >
+                    Import from Logseq
+                  </button>
+                </div>
+
+                {/* Roam Research */}
+                <div className="p-4 border rounded-lg" style={{borderColor: 'rgb(var(--border))'}}>
+                  <h3 className="font-semibold mb-2" style={{color: 'rgb(var(--text))'}}>
+                    Roam Research
+                  </h3>
+                  <p className="text-sm mb-3" style={{color: 'rgb(var(--muted))'}}>
+                    Import your Roam JSON export with full block reference resolution.
+                  </p>
+                  <button
+                    onClick={() => setShowImportWizard(true)}
+                    className="px-4 py-2 rounded hover:opacity-90 transition-opacity"
+                    style={{
+                      background: 'rgb(var(--accent))',
+                      color: 'white'
+                    }}
+                  >
+                    Import from Roam
+                  </button>
+                </div>
+
+                {/* Documentation Link */}
+                <div className="p-4 border rounded-lg" style={{
+                  borderColor: 'rgb(var(--border))',
+                  background: 'rgb(var(--bg))'
+                }}>
+                  <p className="text-sm" style={{color: 'rgb(var(--muted))'}}>
+                    📚 Read the full <a
+                      href="https://github.com/lokus-ai/lokus/blob/main/docs/migration-guide.md"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{color: 'rgb(var(--accent))', textDecoration: 'underline'}}
+                    >
+                      Migration Guide
+                    </a> for detailed instructions and troubleshooting.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {section === "AI Assistant" && (
             <AIAssistant />
           )}
         </main>
       </div>
+
+      {/* Import Wizard Modal */}
+      {showImportWizard && (
+        <ImportWizard
+          onClose={() => setShowImportWizard(false)}
+          initialWorkspacePath={workspacePath}
+        />
+      )}
     </div>
     );
   } catch (error) {

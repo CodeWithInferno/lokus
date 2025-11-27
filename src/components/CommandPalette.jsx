@@ -73,7 +73,7 @@ export default function CommandPalette({
   const { templates } = useTemplates()
   const { process: processTemplate } = useTemplateProcessor()
   const { scopeMode, setLocalScope, setGlobalScope, getScopeStatus } = useFolderScope()
-  const { createBase, bases, loadBase } = useBases()
+  const { createBase, bases, loadBase, dataManager } = useBases()
 
   useEffect(() => {
     getActiveShortcuts().then(setShortcuts)
@@ -467,14 +467,14 @@ export default function CommandPalette({
 
   // Handle template selection
   const handleTemplateSelect = React.useCallback(async (template) => {
-    
+
     try {
       // Process the template with built-in variables
       const result = await processTemplate(template.id, {}, {
         context: {}
       })
-      
-      
+
+
       // Call onShowTemplatePicker with processed content
       if (onShowTemplatePicker) {
         // Create a mock event that mimics the TemplatePicker selection
@@ -484,10 +484,12 @@ export default function CommandPalette({
         }
         onShowTemplatePicker(mockSelection)
       }
-      
+
       // Close command palette
       setOpen(false)
     } catch (err) {
+      console.error('[CommandPalette] ERROR processing template:', err);
+      console.error('[CommandPalette] Error stack:', err.stack);
       // Fallback to raw template content
       if (onShowTemplatePicker) {
         const mockSelection = {
@@ -506,7 +508,11 @@ export default function CommandPalette({
   const [commandMode, setCommandMode] = useState(null) // 'send_email', 'search_emails', 'save_note', etc.
   const [commandParams, setCommandParams] = useState({}) // Parameters for current command
   const [filteredOptions, setFilteredOptions] = useState([]) // Options to show based on current input
-  
+
+  // Bases file search
+  const [basesFiles, setBasesFiles] = useState([])
+  const [filteredFiles, setFilteredFiles] = useState([])
+
   // Email templates
   const emailTemplates = {
     meeting: {
@@ -726,6 +732,43 @@ Best regards,
       .slice(0, 8) // Show top 8 matches
   }, [recentEmails])
 
+  // Load files from Bases when palette opens (only if not cached)
+  useEffect(() => {
+    if (open && dataManager && basesFiles.length === 0) {
+      dataManager.getAllFiles()
+        .then(files => {
+          setBasesFiles(files)
+        })
+        .catch(error => {
+          console.error('❌ [CommandPalette] Failed to load files from Bases:', error)
+          // Fallback to current file tree
+          setBasesFiles(flattenFileTree(fileTree))
+        })
+    } else if (open && basesFiles.length > 0) {
+    } else {
+    }
+  }, [open, dataManager]) // Removed fileTree to prevent excessive re-runs
+
+  // Filter files as user types
+  useEffect(() => {
+
+    if (!inputValue.trim() || commandMode) {
+      setFilteredFiles([])
+      return
+    }
+
+    const searchTerm = inputValue.toLowerCase()
+    const filtered = basesFiles
+      .filter(file => {
+        const fileName = file.name.toLowerCase()
+        const filePath = (file.path || '').toLowerCase()
+        return fileName.includes(searchTerm) || filePath.includes(searchTerm)
+      })
+      .slice(0, 10)
+
+    setFilteredFiles(filtered)
+  }, [inputValue, commandMode, basesFiles])
+
   // Update filtered options based on current command mode and input
   useEffect(() => {
     if (!commandMode) {
@@ -885,24 +928,24 @@ Best regards,
     }
 
     if (e.key === 'Enter') {
-      e.preventDefault()
-      
       // Handle structured command mode
       if (commandMode) {
+        e.preventDefault()  // Only prevent for command mode
+
         if (commandMode === 'send_gmail') {
           if (filteredOptions.length > 0) {
             // Send Gmail from first matching file
             const selectedFile = filteredOptions[0]
             runCommandWithHistory(
-              () => handleSendGmailFromFile(selectedFile), 
-              `Send Gmail: ${selectedFile.name}`, 
-              { 
+              () => handleSendGmailFromFile(selectedFile),
+              `Send Gmail: ${selectedFile.name}`,
+              {
                 fileName: selectedFile.name,
                 filePath: selectedFile.path,
                 originalCommand: `send gmail ${selectedFile.name}`
               }
             )
-            
+
             // Reset command mode
             setCommandMode(null)
             setCommandParams({})
@@ -914,15 +957,15 @@ Best regards,
             // Save first matching email as note
             const selectedEmail = filteredOptions[0]
             runCommandWithHistory(
-              () => handleSaveEmailAsNote(selectedEmail.id), 
-              `Save Email as Note: "${selectedEmail.subject || 'No Subject'}"`, 
-              { 
+              () => handleSaveEmailAsNote(selectedEmail.id),
+              `Save Email as Note: "${selectedEmail.subject || 'No Subject'}"`,
+              {
                 emailSubject: selectedEmail.subject,
                 emailId: selectedEmail.id,
                 originalCommand: `save email "${selectedEmail.subject}" as note`
               }
             )
-            
+
             // Reset command mode
             setCommandMode(null)
             setCommandParams({})
@@ -932,14 +975,14 @@ Best regards,
         } else if (commandMode === 'search_emails') {
           if (inputValue.trim()) {
             runCommandWithHistory(
-              () => handleGmailSearch(inputValue.trim()), 
-              `Search Gmail: ${inputValue.trim()}`, 
-              { 
+              () => handleGmailSearch(inputValue.trim()),
+              `Search Gmail: ${inputValue.trim()}`,
+              {
                 query: inputValue.trim(),
                 originalCommand: `search emails ${inputValue.trim()}`
               }
             )
-            
+
             // Reset command mode
             setCommandMode(null)
             setCommandParams({})
@@ -947,25 +990,27 @@ Best regards,
             return
           }
         }
+        return  // Exit if in command mode
       }
 
-      // Fallback to legacy parsing for non-structured commands
-      if (!commandMode) {
+      // Handle text-based commands (only if input has text)
+      if (inputValue && inputValue.trim()) {
         // Check for email-note commands first
         const emailNoteCommand = parseEmailNoteCommand(inputValue)
         if (emailNoteCommand) {
+          e.preventDefault()  // Only prevent if we're handling it
+
           if (emailNoteCommand.type === 'saveAsNote') {
             if (emailNoteCommand.email) {
               runCommandWithHistory(
-                () => handleSaveEmailAsNote(emailNoteCommand.email.id), 
-                `Save Email as Note: "${emailNoteCommand.email.subject || 'No Subject'}"`, 
-                { 
+                () => handleSaveEmailAsNote(emailNoteCommand.email.id),
+                `Save Email as Note: "${emailNoteCommand.email.subject || 'No Subject'}"`,
+                {
                   emailSubject: emailNoteCommand.email.subject,
                   emailId: emailNoteCommand.email.id,
-                  originalCommand: emailNoteCommand.originalCommand 
+                  originalCommand: emailNoteCommand.originalCommand
                 }
               )
-            } else {
             }
           }
           setInputValue('')
@@ -975,36 +1020,43 @@ Best regards,
         // Fallback to regular Gmail commands
         const gmailCommand = parseGmailCommand(inputValue)
         if (gmailCommand) {
+          e.preventDefault()  // Only prevent if we're handling it
+
           if (gmailCommand.type === 'send') {
-            const recipients = Array.isArray(gmailCommand.recipients) 
-              ? gmailCommand.recipients.join(', ') 
+            const recipients = Array.isArray(gmailCommand.recipients)
+              ? gmailCommand.recipients.join(', ')
               : gmailCommand.recipients || gmailCommand.recipient
             const fileName = gmailCommand.fileName || 'content'
             const subject = gmailCommand.subject || `Email from Lokus`
-            
+
             runCommandWithHistory(
-              () => handleSendEmailSmart(gmailCommand), 
-              `Send Email: ${fileName} → ${recipients}`, 
-              { 
-                fileName, 
-                recipients, 
+              () => handleSendEmailSmart(gmailCommand),
+              `Send Email: ${fileName} → ${recipients}`,
+              {
+                fileName,
+                recipients,
                 subject,
-                originalCommand: gmailCommand.originalCommand 
+                originalCommand: gmailCommand.originalCommand
               }
             )
           } else if (gmailCommand.type === 'search') {
             runCommandWithHistory(
-              () => handleGmailSearch(gmailCommand.query), 
-              `Search Gmail: ${gmailCommand.query}`, 
-              { 
+              () => handleGmailSearch(gmailCommand.query),
+              `Search Gmail: ${gmailCommand.query}`,
+              {
                 query: gmailCommand.query,
-                originalCommand: gmailCommand.originalCommand 
+                originalCommand: gmailCommand.originalCommand
               }
             )
           }
           setInputValue('')
+          return
         }
       }
+
+      // If we reach here, we didn't handle the Enter key
+      // Let cmdk's built-in handler trigger onSelect for regular command items
+      // DON'T call e.preventDefault() - this is the fix!
     }
   }
 
@@ -1407,26 +1459,22 @@ Best regards,
           </>
         )}
 
-        {/* All Files Search */}
-        {allFiles.length > 0 && (
+        {/* File Search - Only show when user is typing */}
+        {filteredFiles.length > 0 && inputValue.trim() && !commandMode && (
           <>
             <CommandSeparator />
             <CommandGroup heading="Files">
-              {allFiles.slice(0, 10).map((file) => (
+              {filteredFiles.map((file) => (
                 <CommandItem
                   key={file.path}
+                  value={file.name}
                   onSelect={() => openFileWithHistory(file)}
                 >
                   <FileText className="mr-2 h-4 w-4" />
                   <span>{file.name}</span>
-                  <CommandShortcut className="text-xs">{file.fullPath}</CommandShortcut>
+                  <CommandShortcut className="text-xs">{file.path}</CommandShortcut>
                 </CommandItem>
               ))}
-              {allFiles.length > 10 && (
-                <CommandItem disabled>
-                  <span className="text-app-muted">...and {allFiles.length - 10} more files</span>
-                </CommandItem>
-              )}
             </CommandGroup>
           </>
         )}

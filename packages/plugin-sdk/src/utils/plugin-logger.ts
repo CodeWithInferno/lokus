@@ -2,7 +2,11 @@
  * @fileoverview Plugin logging utility
  */
 
-import type { LokusAPI, Disposable, LogLevel } from '../types/index.js'
+import type { LokusAPI, Disposable } from '../types/index.js'
+import { LogLevel } from '../types/index.js'
+
+// Re-export LogLevel for convenience
+export { LogLevel }
 
 /**
  * Plugin logger with multiple output channels and levels
@@ -147,7 +151,6 @@ export class PluginLogger implements Disposable {
         console.debug(message)
         break
       case LogLevel.INFO:
-        console.log(message)
         break
       case LogLevel.WARN:
         console.warn(message)

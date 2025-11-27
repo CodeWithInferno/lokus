@@ -17,14 +17,16 @@ export function ThemeProvider({ children }) {
   useEffect(() => {
     async function loadInitial() {
       try {
-        console.log('🎨 ThemeProvider loading initial theme');
+        if (import.meta.env.DEV) {
+        }
 
         // Apply initial theme immediately to prevent flash of unthemed content
         await applyInitialTheme();
 
         // Then read the actual configured theme
         const visuals = await readGlobalVisuals();
-        console.log('🎨 Read global visuals:', visuals);
+        if (import.meta.env.DEV) {
+        }
 
         if (visuals && visuals.theme) {
           setTheme(visuals.theme);
@@ -32,12 +34,14 @@ export function ThemeProvider({ children }) {
           await setGlobalActiveTheme(visuals.theme);
         } else {
           // Fallback to a default theme if none is configured
-          console.log('🎨 No theme configured, using default');
+          if (import.meta.env.DEV) {
+          }
           setTheme('default');
         }
 
         setIsThemeLoaded(true);
-        console.log('🎨 Theme initialization complete');
+        if (import.meta.env.DEV) {
+        }
       } catch (error) {
         console.error('🎨 Error loading initial theme:', error);
         // Ensure we still mark as loaded to prevent infinite loading

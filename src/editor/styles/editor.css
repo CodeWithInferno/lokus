@@ -155,8 +155,9 @@
 
 .tableWrapper th,
 .ProseMirror th {
-    background: var(--editor-table-header-bg, rgb(var(--panel))) !important;
+    background: var(--editor-table-header-bg, rgb(var(--panel-secondary))) !important;
     font-weight: 600;
+    color: rgb(var(--text)) !important;
 }
 .tableWrapper .selectedCell::after,
 .ProseMirror .selectedCell::after {
@@ -237,6 +238,7 @@
     border: 1px solid rgb(var(--border) / 0.2);
     box-shadow: 0 2px 8px rgb(var(--bg) / 0.1);
     transition: transform 0.2s ease, box-shadow 0.2s ease;
+    cursor: pointer;
 }
 
 .ProseMirror img:hover,
@@ -1039,12 +1041,22 @@ ul[data-type="taskList"] li > label > input[type="checkbox"]:checked::after {
   display: flex;
   align-items: center;
   justify-content: center;
-  cursor: pointer;
+  cursor: pointer !important;
   user-select: none;
+  pointer-events: auto;
   color: rgb(var(--muted));
   font-size: 12px;
   transition: color 0.15s ease, transform 0.15s ease;
   z-index: 10;
+}
+
+/* Ensure pointer cursor shows when hovering over the fold indicator area */
+.ProseMirror .foldable-heading {
+  cursor: text;
+}
+
+.ProseMirror .foldable-heading:hover {
+  cursor: text;
 }
 
 .ProseMirror .foldable-heading.unfolded::before {

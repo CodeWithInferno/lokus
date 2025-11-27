@@ -11,6 +11,16 @@ import { useTheme } from '../hooks/theme.jsx'
 import { isValidCanvasData, isValidFilePath } from '../core/security/index.js'
 import { canvasManager } from '../core/canvas/manager.js'
 
+// Canvas configuration constants
+const CANVAS_CONSTANTS = {
+  POSITION_CHANGE_THRESHOLD: 10, // Minimum pixel movement to consider a real change
+  AUTO_SAVE_DEBOUNCE_MS: 300, // Debounce time for auto-save in milliseconds
+  MAX_SAVE_RETRIES: 3, // Maximum number of file save verification attempts
+  LOAD_WAIT_INTERVAL_MS: 100, // Wait interval when checking for pending saves
+  SAVE_STATE_RESET_DELAY_MS: 2000, // Delay before resetting save state indicator
+  ERROR_STATE_RESET_DELAY_MS: 3000 // Delay before resetting error state indicator
+};
+
 export default function Canvas({ 
   canvasPath = null,
   canvasName = null,
@@ -60,19 +70,26 @@ export default function Canvas({
       try {
         // Wait for any pending save operations to complete
         while (saveQueueRef.current.isProcessing) {
-          await new Promise(resolve => setTimeout(resolve, 100))
+          await new Promise(resolve => setTimeout(resolve, CANVAS_CONSTANTS.LOAD_WAIT_INTERVAL_MS))
         }
         
-        // Use CanvasManager for consistent load operations
-        const canvasData = await canvasManager.loadCanvas(canvasPath)
-        
-        
-        // Convert to tldraw format
-        const tldrawData = jsonCanvasToTldraw(canvasData)
-        
-        
+        // Load the TLDraw snapshot directly (no conversion needed!)
+        const tldrawSnapshot = await canvasManager.loadCanvas(canvasPath)
+        if (import.meta.env.DEV) {
+        }
+
         // Load into store
-        loadSnapshot(store, tldrawData)
+        if (import.meta.env.DEV) {
+        }
+        loadSnapshot(store, tldrawSnapshot)
+        if (import.meta.env.DEV) {
+
+          // Check what's actually in the store after loading
+          const storeRecords = store.allRecords();
+
+          // Check specifically for shapes
+          const shapes = storeRecords.filter(r => r.typeName === 'shape');
+        }
         
         // Mark as clean after loading
         setIsDirty(false)
@@ -136,7 +153,7 @@ export default function Canvas({
   }, [processSaveQueue])
   
   // Verify file content after save
-  const verifyFileSave = useCallback(async (canvasPath, expectedData, maxRetries = 3) => {
+  const verifyFileSave = useCallback(async (canvasPath, expectedData, maxRetries = CANVAS_CONSTANTS.MAX_SAVE_RETRIES) => {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         // Wait a bit for filesystem flush
@@ -178,25 +195,16 @@ export default function Canvas({
           throw new Error('Invalid canvas file path')
         }
         
-        // Get current canvas data
-        const snapshot = getSnapshot(editor.store)
-        const allRecords = editor.store.allRecords()
-        const finalSnapshot = snapshot.records?.length > 0 ? snapshot : { records: allRecords }
-        
-        
-        // Convert to JSON Canvas format
-        const canvasData = tldrawToJsonCanvas(finalSnapshot)
-        
-        // Security validation
-        if (!isValidCanvasData(canvasData)) {
-          throw new Error('Canvas data validation failed')
+        // Get current TLDraw snapshot
+        const rawSnapshot = getSnapshot(editor.store)
+        if (import.meta.env.DEV) {
         }
-        
-        // Use CanvasManager for consistent save operations
-        await canvasManager.saveCanvas(canvasPath, canvasData)
-        
+
+        // Save exactly what TLDraw gives us
+        await canvasManager.saveCanvas(canvasPath, rawSnapshot)
+
         // Verify the save was successful
-        const isVerified = await verifyFileSave(canvasPath, canvasData)
+        const isVerified = await verifyFileSave(canvasPath, rawSnapshot)
         if (!isVerified) {
           throw new Error('File verification failed - data may not have been saved correctly')
         }
@@ -211,9 +219,9 @@ export default function Canvas({
         setIsDirty(false)
         setSaveState('saved')
         
-        
+
         // Reset save state after a delay
-        setTimeout(() => setSaveState('idle'), 2000)
+        setTimeout(() => setSaveState('idle'), CANVAS_CONSTANTS.SAVE_STATE_RESET_DELAY_MS)
         
       } catch (error) {
         setSaveState('error')
@@ -233,9 +241,9 @@ export default function Canvas({
           userMessage = `Save failed: ${error.message}`
         }
         
-        
+
         // Reset error state after delay
-        setTimeout(() => setSaveState('idle'), 3000)
+        setTimeout(() => setSaveState('idle'), CANVAS_CONSTANTS.ERROR_STATE_RESET_DELAY_MS)
         
         throw error // Re-throw for queue handling
       } finally {
@@ -289,7 +297,7 @@ export default function Canvas({
             handleSave()
           }
         }
-      }, 300) // Reduced from 500ms to 300ms for faster response
+      }, CANVAS_CONSTANTS.AUTO_SAVE_DEBOUNCE_MS)
     }
 
     // Capture initial snapshot immediately after editor is ready
@@ -403,7 +411,7 @@ export default function Canvas({
       const newY = newShape.y || 0
       
       const positionDiff = Math.sqrt(Math.pow(newX - oldX, 2) + Math.pow(newY - oldY, 2))
-      if (positionDiff > 10) { // More than 10px movement is a real change
+      if (positionDiff > CANVAS_CONSTANTS.POSITION_CHANGE_THRESHOLD) {
         return true
       }
     }
