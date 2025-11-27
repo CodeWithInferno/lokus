@@ -32,6 +32,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": "all",
     "icon": [
       "icons/32x32.png",
@@ -65,6 +66,16 @@
       "mobile": [],
       "desktop": {
         "schemes": ["lokus"]
+      }
+    },
+    "updater": {
+      "active": true,
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEJBRjkyMUZFQUYyNTFFMjMKUldRakhpV3YvaUg1dW94TlNtWGJoWldtdldaTFhQdUprNk43Q3hxZmpnSzlQeVJqSFoxd1QxRUIK",
+      "endpoints": [
+        "https://github.com/CodeWithInferno/lokus/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
       }
     }
   }
